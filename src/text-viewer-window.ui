@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- vim: set ts=2 sw=2 sts=2 expandtab: -->
 <interface>
   <requires lib="gtk" version="4.0"/>
   <requires lib="Adw" version="1.0"/>
@@ -18,6 +19,15 @@
                     <property name="label">Open</property>
                     <property name="action-name">win.open</property>
                 </object>
+            </child>
+            <child type="end">
+              <object class="GtkLabel" id="cursor_pos">
+                <property name="label">Ln 0, Col 0</property>
+                <style>
+                    <class name="dim-label"/>
+                    <class name="numeric"/>
+                </style>
+              </object>
             </child>
             <child type="end">
               <object class="GtkMenuButton">
@@ -64,5 +74,3 @@
     </section>
   </menu>
 </interface>
-<!-- vim: ts=2:sts=2:expandtab 
--->
