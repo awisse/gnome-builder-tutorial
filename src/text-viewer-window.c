@@ -38,9 +38,22 @@ struct _TextViewerWindow
 G_DEFINE_FINAL_TYPE (TextViewerWindow, text_viewer_window, ADW_TYPE_APPLICATION_WINDOW)
 
 static void
+text_viewer_window_finalize (GObject *gobject)
+{
+  TextViewerWindow *self = TEXT_VIEWER_WINDOW (gobject);
+
+  g_clear_object (&self->settings);
+
+  G_OBJECT_CLASS (text_viewer_window_parent_class)->finalize (gobject);
+}
+
+static void
 text_viewer_window_class_init (TextViewerWindowClass *klass)
 {
 	GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
+  GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
+
+  gobject_class->finalize = text_viewer_window_finalize;
 
 	gtk_widget_class_set_template_from_resource (widget_class, "/com/example/TextViewer/text-viewer-window.ui");
 	gtk_widget_class_bind_template_child (widget_class, TextViewerWindow, header_bar);
@@ -83,6 +96,17 @@ text_viewer_window_init (TextViewerWindow *self)
   g_signal_connect (buffer, "notify::cursor-position",
                     G_CALLBACK (text_viewer_window__update_cursor_position),
                     self);
+
+  self->settings = g_settings_new ("com.example.TextViewer");
+
+  g_settings_bind (self->settings, "window-width", G_OBJECT (self), "default-width",
+      G_SETTINGS_BIND_DEFAULT);
+
+  g_settings_bind (self->settings, "window-height", G_OBJECT (self), "default-height",
+      G_SETTINGS_BIND_DEFAULT);
+
+  g_settings_bind (self->settings, "window-maximized", G_OBJECT (self), "maximized",
+      G_SETTINGS_BIND_DEFAULT);
 }
 
 static void
