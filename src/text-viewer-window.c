@@ -33,6 +33,7 @@ struct _TextViewerWindow
 	GtkTextView *main_text_view;
   GtkButton *open_button;
   GtkLabel *cursor_pos;
+  AdwToastOverlay *toast_overlay;
 };
 
 G_DEFINE_FINAL_TYPE (TextViewerWindow, text_viewer_window, ADW_TYPE_APPLICATION_WINDOW)
@@ -60,6 +61,7 @@ text_viewer_window_class_init (TextViewerWindowClass *klass)
 	gtk_widget_class_bind_template_child (widget_class, TextViewerWindow, main_text_view);
 	gtk_widget_class_bind_template_child (widget_class, TextViewerWindow, open_button);
 	gtk_widget_class_bind_template_child (widget_class, TextViewerWindow, cursor_pos);
+	gtk_widget_class_bind_template_child (widget_class, TextViewerWindow, toast_overlay);
 }
 
 static void
@@ -80,19 +82,20 @@ text_viewer_window__update_cursor_position (GtkTextBuffer *buffer,
 static void
 text_viewer_window_init (TextViewerWindow *self)
 {
+  g_autoptr (GSimpleAction) open_action = g_simple_action_new ("open", NULL);
+  g_autoptr (GSimpleAction) save_action = g_simple_action_new ("save-as", NULL);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->main_text_view);
+
 	gtk_widget_init_template (GTK_WIDGET (self));
 
-  g_autoptr (GSimpleAction) open_action = g_simple_action_new ("open", NULL);
   g_signal_connect (open_action, "activate", 
       G_CALLBACK (text_viewer_window__open_file_dialog), self);
   g_action_map_add_action (G_ACTION_MAP (self), G_ACTION (open_action));
 
-  g_autoptr (GSimpleAction) save_action = g_simple_action_new ("save-as", NULL);
   g_signal_connect (save_action, "activate", 
       G_CALLBACK (text_viewer_window__save_file_dialog), self);
   g_action_map_add_action (G_ACTION_MAP (self), G_ACTION (save_action));
 
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->main_text_view);
   g_signal_connect (buffer, "notify::cursor-position",
                     G_CALLBACK (text_viewer_window__update_cursor_position),
                     self);
@@ -189,28 +192,26 @@ on_save_response (GObject       *source,
 }
 
 static void 
-open_file_complete (GObject           *source_object,
-                    GAsyncResult      *result,
-                    TextViewerWindow  *self);
+open_file_complete (GObject *source_object, GAsyncResult *result, gpointer user_data);
 
 static void 
-open_file (TextViewerWindow *self,
-           GFile            *file)
+open_file (TextViewerWindow *self, GFile *file)
 {
-  g_file_load_contents_async (file,
-                              NULL,
-                              (GAsyncReadyCallback) open_file_complete,
-                              self);
+  g_file_load_contents_async (file, NULL, (GAsyncReadyCallback) open_file_complete, self);
 }
 
 static void 
-open_file_complete (GObject           *source_object,
-                    GAsyncResult      *result,
-                    TextViewerWindow  *self)
+open_file_complete (GObject *source_object, GAsyncResult *result, gpointer user_data)
 {
   GFile *file = G_FILE (source_object);
+  TextViewerWindow *self = user_data;
 
   g_autofree char *contents = NULL;
+  g_autofree char *display_name = NULL;
+  g_autofree char *msg = NULL;
+  g_autoptr (GFileInfo) info;
+  GtkTextBuffer *buffer;
+  GtkTextIter start;
   gsize length = 0;
 
   g_autoptr (GError) error = NULL;
@@ -218,39 +219,11 @@ open_file_complete (GObject           *source_object,
   // Complete the asynchronous operation; this function will either
   // give you the contents of the file as a byte array, or will
   // set the error argument
-  g_file_load_contents_finish (file,
-                               result,
-                               &contents,
-                               &length,
-                               NULL,
-                               &error);
+  g_file_load_contents_finish (file, result, &contents, &length, NULL, &error);
   
-  // In case of error, print a warning to the standard error output
-  if (error != NULL)
-  {
-    g_printerr ("Unable to open \"%s\": %s\n",
-                g_file_peek_path (file),
-                error->message);
-    return;
-  }
-
-  // Ensure that the file is encoded with UTF-8
-  if (!g_utf8_validate (contents, length, NULL))
-  {
-    g_printerr ("Unable to load the contents of \"%s\": "
-                "the file is not encoded with UTF-8\n",
-                g_file_peek_path (file));
-    return;
-  }
-
   // Query the display name of the file
-  g_autofree char *display_name = NULL;
-  g_autoptr (GFileInfo) info =
-    g_file_query_info (file,
-                       "standard::display-name",
-                       G_FILE_QUERY_INFO_NONE,
-                       NULL,
-                       NULL);
+  info = g_file_query_info (file, "standard::display-name", G_FILE_QUERY_INFO_NONE, 
+      NULL, NULL);
   if (info != NULL)
   {
     display_name =
@@ -261,47 +234,68 @@ open_file_complete (GObject           *source_object,
     display_name = g_file_get_basename (file);
   }
 
+  // In case of error,  show a toast
+  if (error != NULL)
+  {
+    msg = g_strdup_printf ("Unable to open \"%s\"", display_name);
+    adw_toast_overlay_add_toast (self->toast_overlay, adw_toast_new (msg));
+    return;
+  }
+
+  // Ensure that the file is encoded with UTF-8
+  if (!g_utf8_validate (contents, length, NULL))
+  {
+    msg = g_strdup_printf ("Invalid text encoding for \"%s\"", display_name);
+
+    adw_toast_overlay_add_toast (self->toast_overlay, adw_toast_new (msg));
+    return;
+  }
+
   // Retrieve the GtkTextBuffer instance that stores the
   // text displayed by the GtkTextView widget
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->main_text_view);
+  buffer = gtk_text_view_get_buffer (self->main_text_view);
 
   // Set the text using the contents of the file
   gtk_text_buffer_set_text (buffer, contents, length);
 
   // Repositon the cursor so it's at the start of the text
-  GtkTextIter start;
   gtk_text_buffer_get_start_iter (buffer, &start);
   gtk_text_buffer_place_cursor (buffer, &start);
 
   // Set the title using the display name
   gtk_window_set_title (GTK_WINDOW (self), display_name);
+
+  // Show a toast for the successful loading
+  msg = g_strdup_printf ("Opened \"%s\"", display_name);
+  adw_toast_overlay_add_toast (self->toast_overlay, adw_toast_new (msg));
 }
 
 static void
 save_file_complete (GObject *source_object, GAsyncResult *result, gpointer user_data);
 
 static void 
-save_file (TextViewerWindow *self,
-           GFile            *file)
+save_file (TextViewerWindow *self, GFile            *file)
 {
   GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->main_text_view);
+  GtkTextIter start;
+  GtkTextIter end;
+  g_autoptr (GBytes) bytes;
+  char* text;
 
   // Retrieve the iterator at the start of the buffer
-  GtkTextIter start;
   gtk_text_buffer_get_start_iter (buffer, &start);
 
   // Retrieve the iterator at the end of the buffer
-  GtkTextIter end;
   gtk_text_buffer_get_end_iter (buffer, &end);
 
   // Retrieve all the visible text between the two bounds
-  char *text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
+  text = gtk_text_buffer_get_text (buffer, &start, &end, FALSE);
 
   // If there is nothing to save, return early
   if (text == NULL)
     return;
 
-  g_autoptr(GBytes) bytes = g_bytes_new_take (text, strlen (text));
+  bytes = g_bytes_new_take (text, strlen (text));
 
   // Start the asynchronous operation to save the data into the file
   g_file_replace_contents_bytes_async (file, bytes, NULL, FALSE, G_FILE_CREATE_NONE,
@@ -313,14 +307,17 @@ static void
 save_file_complete (GObject *source_object, GAsyncResult *result, gpointer user_data)
 {
   GFile *file = G_FILE (source_object);
-
+  TextViewerWindow *self = user_data;
+  g_autoptr (GFileInfo) info; 
   g_autoptr (GError) error = NULL;
+  g_autofree char *display_name = NULL;
+  g_autofree char *msg = NULL;
+
   g_file_replace_contents_finish (file, result, NULL, &error);
 
   // Query the display name for the file
-  g_autofree char *display_name = NULL;
-  g_autoptr (GFileInfo) info = g_file_query_info (file, "standard::display-name", 
-      G_FILE_QUERY_INFO_NONE, NULL, NULL);
+  info = g_file_query_info (file, "standard::display-name", G_FILE_QUERY_INFO_NONE, 
+      NULL, NULL);
 
   if (info != NULL)
   {
@@ -334,8 +331,14 @@ save_file_complete (GObject *source_object, GAsyncResult *result, gpointer user_
 
   if (error != NULL)
   {
-    g_printerr ("Unable to save \"%s\": %s\n", display_name, error->message);
+    msg = g_strdup_printf ("Unable to save as \"%s\"", display_name);
   }
+  else
+  {
+    msg = g_strdup_printf ("Saved as \"%s\"", display_name);
+  }
+
+  adw_toast_overlay_add_toast (self->toast_overlay, adw_toast_new (msg));
 }
 
 
@@ -345,19 +348,19 @@ text_viewer_window__update_cursor_position (GtkTextBuffer *buffer,
                                             TextViewerWindow *self)
 {
   int cursor_pos = 0;
+  GtkTextIter iter;
+  g_autofree char *cursor_str;
+
 
   // Retrieve the value of the "cursor-position" property
   g_object_get (buffer, "cursor-position", &cursor_pos, NULL);
 
   // Construct the text iterator for the position of the cursor
-  GtkTextIter iter;
   gtk_text_buffer_get_iter_at_offset (buffer, &iter, cursor_pos);
 
   // Set the new contents of the label
-  g_autofree char *cursor_str =
-    g_strdup_printf ("Ln %d, Col %d",
-                     gtk_text_iter_get_line (&iter) + 1,
-                     gtk_text_iter_get_line_offset (&iter) + 1);
+  cursor_str = g_strdup_printf ("Ln %d, Col %d", gtk_text_iter_get_line (&iter) + 1, 
+      gtk_text_iter_get_line_offset (&iter) + 1);
 
   gtk_label_set_text (self->cursor_pos, cursor_str);
 }

@@ -36,10 +36,8 @@ text_viewer_application_new (const char        *application_id,
 {
 	g_return_val_if_fail (application_id != NULL, NULL);
 
-	return g_object_new (TEXT_VIEWER_TYPE_APPLICATION,
-	                     "application-id", application_id,
-	                     "flags", flags,
-	                     NULL);
+	return g_object_new (TEXT_VIEWER_TYPE_APPLICATION, "application-id", application_id,
+	                     "flags", flags, NULL);
 }
 
 static void
@@ -52,9 +50,7 @@ text_viewer_application_activate (GApplication *app)
 	window = gtk_application_get_active_window (GTK_APPLICATION (app));
 
 	if (window == NULL)
-		window = g_object_new (TEXT_VIEWER_TYPE_WINDOW,
-		                       "application", app,
-		                       NULL);
+		window = g_object_new (TEXT_VIEWER_TYPE_WINDOW, "application", app, NULL);
 
 	gtk_window_present (window);
 }
