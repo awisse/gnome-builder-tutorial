@@ -26,7 +26,7 @@ struct _TextViewerWindow
 {
 	AdwApplicationWindow  parent_instance;
 
-  GSettings           *settings;
+  GSettings *settings;
 
 	/* Template widgets */
 	AdwHeaderBar *header_bar;
@@ -84,11 +84,14 @@ text_viewer_window_init (TextViewerWindow *self)
 {
   g_autoptr (GSimpleAction) open_action = g_simple_action_new ("open", NULL);
   g_autoptr (GSimpleAction) save_action = g_simple_action_new ("save-as", NULL);
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer (self->main_text_view);
+  GtkTextBuffer *buffer;
 
+  // Must initialize object before defining "buffer"
 	gtk_widget_init_template (GTK_WIDGET (self));
 
-  g_signal_connect (open_action, "activate", 
+  buffer = gtk_text_view_get_buffer (self->main_text_view);
+
+  g_signal_connect (open_action, "activate",
       G_CALLBACK (text_viewer_window__open_file_dialog), self);
   g_action_map_add_action (G_ACTION_MAP (self), G_ACTION (open_action));
 
